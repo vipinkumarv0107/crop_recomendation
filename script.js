@@ -1,508 +1,252 @@
+/* =========================================================
+   CropAI - script.js
+   Connects the frontend to the backend deployed on Render
+========================================================= */
 
-/* ==========================================
-   AgriAI - Crop Recommendation System
-   Frontend JavaScript
-   Backend: Python + FastAPI
-========================================== */
+// ---------- CONFIG ----------
+const API_BASE_URL = "https://crop-recomendation-4.onrender.com";
+const PREDICT_ENDPOINT = "/predict"; // change if your backend route is different
+const REQUEST_TIMEOUT_MS = 60000;    // Render free tier can take ~50s to wake up
 
-// API Configuration
-const API_URL = "https://crop-recomendation-4.onrender.com";
-
-// DOM Elements
+// ---------- DOM ELEMENTS ----------
 const form = document.getElementById("predictionForm");
-
-// ==========================================
-// 1. FORM SUBMISSION
-// ==========================================
-
-if (form) {
-    form.addEventListener("submit", async function (event) {
-        event.preventDefault();
-
-        const button = form.querySelector(
-            "button[type='submit']"
-        );
-
-        const originalButtonText = button
-            ? button.innerHTML
-            : "Predict Crop";
-
-        try {
-            // Get input values
-            const data = {
-                nitrogen: parseFloat(
-                    document.getElementById("nitrogen").value
-                ),
-
-                phosphorus: parseFloat(
-                    document.getElementById("phosphorus").value
-                ),
-
-                potassium: parseFloat(
-                    document.getElementById("potassium").value
-                ),
-
-                temperature: parseFloat(
-                    document.getElementById("temperature").value
-                ),
-
-                humidity: parseFloat(
-                    document.getElementById("humidity").value
-                ),
-
-                ph_value: parseFloat(
-                    document.getElementById("ph_value").value
-                ),
-
-                rainfall: parseFloat(
-                    document.getElementById("rainfall").value
-                )
-            };
-
-            // Validate inputs
-            for (const key in data) {
-                if (!Number.isFinite(data[key])) {
-                    showError(
-                        `Please enter a valid value for ${key}.`
-                    );
-                    return;
-                }
-            }
-
-            // Loading state
-            if (button) {
-                button.disabled = true;
-                button.innerHTML = "🌱 Predicting...";
-            }
-
-            showStatus(
-                "Analyzing soil and weather conditions...",
-                "loading"
-            );
-
-            // Send request to FastAPI
-            const response = await fetch(
-                `${API_URL}/predict`,
-                {
-                    method: "POST",
-
-                    headers: {
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    },
-
-                    body: JSON.stringify(data)
-                }
-            );
-
-            // Read response safely
-            const responseText = await response.text();
-
-            let result;
-
-            try {
-                result = responseText
-                    ? JSON.parse(responseText)
-                    : {};
-            } catch (error) {
-                throw new Error(
-                    `Server returned invalid JSON. ` +
-                    `HTTP Status: ${response.status}. ` +
-                    `Response: ${responseText.slice(0, 200)}`
-                );
-            }
-
-            // Handle HTTP errors
-            if (!response.ok) {
-                let errorMessage = "Prediction failed.";
-
-                if (result.detail) {
-                    if (Array.isArray(result.detail)) {
-                        errorMessage = result.detail
-                            .map(error => error.msg || JSON.stringify(error))
-                            .join(", ");
-                    } else {
-                        errorMessage = result.detail;
-                    }
-                } else if (result.message) {
-                    errorMessage = result.message;
-                } else {
-                    errorMessage =
-                        `Server error: HTTP ${response.status}`;
-                }
-
-                throw new Error(errorMessage);
-            }
-
-            // Validate API response
-            if (!result.recommended_crop) {
-                throw new Error(
-                    "Invalid API response: recommended_crop is missing."
-                );
-            }
-
-            // Display prediction
-            displayPrediction(result);
-
-            showStatus(
-                "Prediction completed successfully! 🌱",
-                "success"
-            );
-
-        } catch (error) {
-
-            console.error("FastAPI Error:", error);
-
-            let message = error.message;
-
-            if (
-                error instanceof TypeError &&
-                error.message.includes("fetch")
-            ) {
-                message =
-                    "Unable to reach the backend. " +
-                    "Check your internet connection, " +
-                    "backend deployment, and CORS settings.";
-            }
-
-            showError(message);
-
-        } finally {
-
-            // Reset button
-            if (button) {
-                button.disabled = false;
-                button.innerHTML = originalButtonText;
-            }
-        }
-    });
-}
-
-
-// ==========================================
-// 2. DISPLAY PREDICTION
-// ==========================================
-
-function displayPrediction(result) {
-
-    // Recommended crop
-    const resultElement =
-        document.getElementById("result");
-
-    if (resultElement) {
-        resultElement.textContent =
-            result.recommended_crop || "Unknown";
-    }
-
-    // Crop description
-    const descriptionElement =
-        document.getElementById("resultDescription");
-
-    if (descriptionElement) {
-        const crop = result.recommended_crop || "crop";
-
-        descriptionElement.textContent =
-            `${crop} is recommended based on the provided ` +
-            "soil and environmental conditions.";
-    }
-
-    // Confidence percentage
-    const confidenceBox =
-        document.getElementById("confidenceBox");
-
-    const confidenceElement =
-        document.getElementById("confidence");
-
-    if (
-        confidenceElement &&
-        result.confidence !== undefined &&
-        result.confidence !== null
-    ) {
-        const confidence = Number(result.confidence);
-
-        if (Number.isFinite(confidence)) {
-            confidenceElement.textContent =
-                `${confidence.toFixed(2)}%`;
-
-            if (confidenceBox) {
-                confidenceBox.style.display = "block";
-            }
-        }
-    }
-
-    // Crop probability list
-    const probabilitySection =
-        document.getElementById("cropProbabilitySection");
-
-    const cropList =
-        document.getElementById("cropList");
-
-    if (
-        probabilitySection &&
-        cropList &&
-        Array.isArray(result.crop_probabilities)
-    ) {
-
-        // Clear previous results
-        cropList.innerHTML = "";
-
-        // Sort highest probability first
-        const probabilities =
-            [...result.crop_probabilities].sort(
-                (a, b) =>
-                    Number(b.percentage) -
-                    Number(a.percentage)
-            );
-
-        // Create crop probability cards
-        probabilities.forEach((item, index) => {
-
-            const crop =
-                item.crop || "Unknown";
-
-            const percentage =
-                Number(item.percentage) || 0;
-
-            // Main container
-            const cropItem =
-                document.createElement("div");
-
-            cropItem.className =
-                "crop-probability-item";
-
-            // Header
-            const header =
-                document.createElement("div");
-
-            header.className =
-                "crop-probability-header";
-
-            // Crop name
-            const cropName =
-                document.createElement("span");
-
-            cropName.className = "crop-name";
-
-            cropName.textContent =
-                `${index + 1}. ${crop}`;
-
-            // Percentage
-            const percentageText =
-                document.createElement("span");
-
-            percentageText.className =
-                "crop-percentage";
-
-            percentageText.textContent =
-                `${percentage.toFixed(2)}%`;
-
-            header.appendChild(cropName);
-            header.appendChild(percentageText);
-
-            // Progress background
-            const progress =
-                document.createElement("div");
-
-            progress.className = "progress";
-
-            // Progress bar
-            const progressBar =
-                document.createElement("div");
-
-            progressBar.className =
-                "progress-bar";
-
-            progressBar.style.width = "0%";
-
-            progress.appendChild(progressBar);
-
-            cropItem.appendChild(header);
-            cropItem.appendChild(progress);
-
-            cropList.appendChild(cropItem);
-
-            // Animate progress bar
-            requestAnimationFrame(() => {
-                progressBar.style.width =
-                    `${Math.min(Math.max(percentage, 0), 100)}%`;
-            });
-        });
-
-        probabilitySection.style.display = "block";
-    }
-
-    // Show result section
-    const resultContainer =
-        document.getElementById("resultContainer");
-
-    if (resultContainer) {
-        resultContainer.style.display = "block";
-
-        resultContainer.scrollIntoView({
-            behavior: "smooth",
-            block: "center"
-        });
-    }
-}
-
-
-// ==========================================
-// 3. SHOW ERROR MESSAGE
-// ==========================================
-
+const predictButton = document.getElementById("predictButton");
+const buttonText = document.getElementById("buttonText");
+const errorMessage = document.getElementById("errorMessage");
+
+const resultEl = document.getElementById("result");
+const resultDescription = document.getElementById("resultDescription");
+const confidenceBox = document.getElementById("confidenceBox");
+const confidenceEl = document.getElementById("confidence");
+const probabilitySection = document.getElementById("cropProbabilitySection");
+const cropList = document.getElementById("cropList");
+
+// ---------- HELPERS ----------
 function showError(message) {
-
-    console.error(message);
-
-    const status =
-        document.getElementById("status");
-
-    if (status) {
-        status.textContent = message;
-
-        status.className = "status error";
-
-        status.style.display = "block";
-
-    } else {
-        alert(message);
-    }
+    errorMessage.textContent = message;
+    errorMessage.style.display = "block";
 }
 
+function hideError() {
+    errorMessage.textContent = "";
+    errorMessage.style.display = "none";
+}
 
-// ==========================================
-// 4. SHOW STATUS MESSAGE
-// ==========================================
+function setLoading(isLoading, text) {
+    predictButton.disabled = isLoading;
+    buttonText.textContent = isLoading
+        ? (text || "⏳ Analyzing...")
+        : "🤖 Predict Best Crop";
+}
 
-function showStatus(message, type) {
+function capitalize(str) {
+    str = String(str);
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
 
-    const status =
-        document.getElementById("status");
+// Convert 0-1 or 0-100 values to a 0-100 number
+function toPercent(value) {
+    const num = Number(value);
+    if (Number.isNaN(num)) return 0;
+    return num <= 1 ? num * 100 : num;
+}
 
-    if (!status) {
+// Turn many possible backend shapes into [{name, percent}, ...]
+function normalizeProbabilities(data) {
+    const raw =
+        data.probabilities ||
+        data.all_probabilities ||
+        data.crop_probabilities ||
+        data.top_predictions ||
+        data.top_crops ||
+        null;
+
+    if (!raw) return [];
+
+    let list = [];
+
+    if (Array.isArray(raw)) {
+        list = raw.map((item) => {
+            if (Array.isArray(item)) {
+                return { name: item[0], percent: toPercent(item[1]) };
+            }
+            return {
+                name: item.crop || item.name || item.label,
+                percent: toPercent(
+                    item.probability ?? item.confidence ?? item.score ?? 0
+                ),
+            };
+        });
+    } else if (typeof raw === "object") {
+        list = Object.entries(raw).map(([name, value]) => ({
+            name,
+            percent: toPercent(value),
+        }));
+    }
+
+    return list
+        .filter((c) => c.name)
+        .sort((a, b) => b.percent - a.percent);
+}
+
+function renderProbabilities(list) {
+    cropList.innerHTML = "";
+
+    if (!list.length) {
+        probabilitySection.style.display = "none";
         return;
     }
 
-    status.textContent = message;
+    list.slice(0, 5).forEach((crop) => {
+        const item = document.createElement("div");
+        item.className = "crop-item";
 
-    status.className = `status ${type}`;
+        item.innerHTML = `
+            <div class="crop-info">
+                <span class="crop-name">${capitalize(crop.name)}</span>
+                <span class="crop-percent">${crop.percent.toFixed(1)}%</span>
+            </div>
+            <div class="progress-container">
+                <div class="progress-bar"></div>
+            </div>
+        `;
 
-    status.style.display = "block";
+        cropList.appendChild(item);
+
+        // animate bar after it is in the DOM
+        const bar = item.querySelector(".progress-bar");
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                bar.style.width = `${Math.min(crop.percent, 100)}%`;
+            });
+        });
+    });
+
+    probabilitySection.style.display = "block";
 }
 
+// ---------- FORM SUBMIT ----------
+form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    hideError();
 
-// ==========================================
-// 5. RESET PREDICTION FORM
-// ==========================================
+    const N = parseFloat(document.getElementById("nitrogen").value);
+    const P = parseFloat(document.getElementById("phosphorus").value);
+    const K = parseFloat(document.getElementById("potassium").value);
+    const temperature = parseFloat(document.getElementById("temperature").value);
+    const humidity = parseFloat(document.getElementById("humidity").value);
+    const ph = parseFloat(document.getElementById("ph_value").value);
+    const rainfall = parseFloat(document.getElementById("rainfall").value);
 
-function resetPrediction() {
-
-    if (form) {
-        form.reset();
+    if ([N, P, K, temperature, humidity, ph, rainfall].some(Number.isNaN)) {
+        showError("Please fill in all fields with valid numbers.");
+        return;
     }
 
-    // Hide result
-    const resultContainer =
-        document.getElementById("resultContainer");
+    // Both naming styles are sent so it works with common backend schemas
+    const payload = {
+        N, P, K,
+        nitrogen: N,
+        phosphorus: P,
+        potassium: K,
+        temperature,
+        humidity,
+        ph,
+        ph_value: ph,
+        rainfall,
+    };
 
-    if (resultContainer) {
-        resultContainer.style.display = "none";
-    }
+    setLoading(true);
+    resultEl.textContent = "Analyzing...";
+    resultDescription.textContent =
+        "Our AI model is analyzing your soil and weather data. " +
+        "The first request may take up to a minute while the server wakes up.";
+    confidenceBox.style.display = "none";
+    probabilitySection.style.display = "none";
 
-    // Clear crop list
-    const cropList =
-        document.getElementById("cropList");
-
-    if (cropList) {
-        cropList.innerHTML = "";
-    }
-
-    // Hide confidence
-    const confidenceBox =
-        document.getElementById("confidenceBox");
-
-    if (confidenceBox) {
-        confidenceBox.style.display = "none";
-    }
-
-    // Hide probability section
-    const probabilitySection =
-        document.getElementById("cropProbabilitySection");
-
-    if (probabilitySection) {
-        probabilitySection.style.display = "none";
-    }
-
-    // Clear status
-    const status =
-        document.getElementById("status");
-
-    if (status) {
-        status.textContent = "";
-        status.style.display = "none";
-    }
-}
-
-
-// ==========================================
-// 6. CHECK FASTAPI CONNECTION
-// ==========================================
-
-async function checkAPIConnection() {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
+        const response = await fetch(`${API_BASE_URL}${PREDICT_ENDPOINT}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+        });
 
-        const response = await fetch(
-            `${API_URL}/docs`,
-            {
-                method: "GET",
-                headers: {
-                    "Accept": "text/html"
+        if (!response.ok) {
+            let detail = `Server error (${response.status})`;
+            try {
+                const err = await response.json();
+                if (typeof err.detail === "string") {
+                    detail = err.detail;
+                } else if (Array.isArray(err.detail)) {
+                    // FastAPI validation errors
+                    detail = err.detail
+                        .map((d) => `${(d.loc || []).slice(-1)[0]}: ${d.msg}`)
+                        .join(", ");
+                } else if (err.error || err.message) {
+                    detail = err.error || err.message;
                 }
-            }
-        );
-
-        if (response.ok) {
-
-            console.log(
-                "FastAPI connected successfully:",
-                API_URL
-            );
-
-        } else {
-
-            console.warn(
-                "FastAPI responded with:",
-                response.status
-            );
+            } catch (_) { /* ignore JSON parse errors */ }
+            throw new Error(detail);
         }
 
+        const data = await response.json();
+
+        const crop =
+            data.recommended_crop ||
+            data.predicted_crop ||
+            data.prediction ||
+            data.crop ||
+            data.result;
+
+        if (!crop) {
+            throw new Error("Unexpected response from server.");
+        }
+
+        resultEl.textContent = capitalize(crop);
+        resultDescription.textContent =
+            `Based on your soil nutrients and weather conditions, ` +
+            `${capitalize(crop)} is the most suitable crop to grow.`;
+
+        const probs = normalizeProbabilities(data);
+
+        let confidence = data.confidence ?? data.probability ?? data.score;
+        if (confidence === undefined && probs.length) {
+            confidence = probs[0].percent;
+        }
+
+        if (confidence !== undefined) {
+            confidenceEl.textContent = `${toPercent(confidence).toFixed(1)}%`;
+            confidenceBox.style.display = "inline-block";
+        }
+
+        renderProbabilities(probs);
     } catch (error) {
+        console.error("Prediction error:", error);
 
-        console.warn(
-            "FastAPI connection failed:",
-            error.message
-        );
+        resultEl.textContent = "Waiting for prediction...";
+        resultDescription.textContent =
+            "Enter your soil and weather details to discover the most suitable crop.";
+
+        if (error.name === "AbortError") {
+            showError("The server took too long to respond. Please try again.");
+        } else if (error instanceof TypeError) {
+            showError(
+                "Could not reach the server. Check your internet connection " +
+                "or try again in a moment."
+            );
+        } else {
+            showError(error.message || "Something went wrong. Please try again.");
+        }
+    } finally {
+        clearTimeout(timeoutId);
+        setLoading(false);
     }
-}
+});
 
-
-// ==========================================
-// 7. PAGE INITIALIZATION
-// ==========================================
-
-document.addEventListener(
-    "DOMContentLoaded",
-    function () {
-
-        console.log("🌱 AgriAI frontend loaded");
-
-        console.log(
-            "FastAPI Backend:",
-            API_URL
-        );
-
-        checkAPIConnection();
-
-    }
-);
+// ---------- WAKE UP RENDER SERVER ON PAGE LOAD ----------
+// Render's free tier sleeps when idle; this pings it early.
+fetch(`${API_BASE_URL}/`, { method: "GET" }).catch(() => {});
