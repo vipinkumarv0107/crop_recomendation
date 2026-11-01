@@ -1,252 +1,295 @@
-/* =========================================================
-   CropAI - script.js
-   Connects the frontend to the backend deployed on Render
-========================================================= */
 
-// ---------- CONFIG ----------
-const API_BASE_URL = "https://crop-recomendation-4.onrender.com";
-const PREDICT_ENDPOINT = "/predict"; // change if your backend route is different
-const REQUEST_TIMEOUT_MS = 60000;    // Render free tier can take ~50s to wake up
+"use strict";
 
-// ---------- DOM ELEMENTS ----------
+// ======================================
+// AgriAI - Crop Recommendation System
+// ======================================
+
+const API_URL = "http://127.0.0.1:8000";
+
+// Get HTML elements
 const form = document.getElementById("predictionForm");
-const predictButton = document.getElementById("predictButton");
+const button = document.getElementById("predictButton");
 const buttonText = document.getElementById("buttonText");
-const errorMessage = document.getElementById("errorMessage");
 
-const resultEl = document.getElementById("result");
-const resultDescription = document.getElementById("resultDescription");
+const result = document.getElementById("result");
+const description = document.getElementById("resultDescription");
+
 const confidenceBox = document.getElementById("confidenceBox");
-const confidenceEl = document.getElementById("confidence");
-const probabilitySection = document.getElementById("cropProbabilitySection");
+const confidence = document.getElementById("confidence");
+
+const cropSection = document.getElementById("cropProbabilitySection");
 const cropList = document.getElementById("cropList");
 
-// ---------- HELPERS ----------
+const errorMessage = document.getElementById("errorMessage");
+
+// ======================================
+// Read Input Values
+// ======================================
+
+function getInputData() {
+
+    return {
+        nitrogen: Number(document.getElementById("nitrogen").value),
+        phosphorus: Number(document.getElementById("phosphorus").value),
+        potassium: Number(document.getElementById("potassium").value),
+        temperature: Number(document.getElementById("temperature").value),
+        humidity: Number(document.getElementById("humidity").value),
+        ph_value: Number(document.getElementById("ph_value").value),
+        rainfall: Number(document.getElementById("rainfall").value)
+    };
+}
+
+// ======================================
+// Validate Input
+// ======================================
+
+function validateData(data) {
+
+    for (const [key, value] of Object.entries(data)) {
+
+        if (!Number.isFinite(value)) {
+            throw new Error(`Please enter a valid ${key}.`);
+        }
+    }
+
+    if (data.nitrogen < 0 ||
+        data.phosphorus < 0 ||
+        data.potassium < 0 ||
+        data.rainfall < 0) {
+        throw new Error("Soil nutrients and rainfall cannot be negative.");
+    }
+
+    if (data.temperature < -10 || data.temperature > 60) {
+        throw new Error("Temperature must be between -10 and 60°C.");
+    }
+
+    if (data.humidity < 0 || data.humidity > 100) {
+        throw new Error("Humidity must be between 0 and 100%.");
+    }
+
+    if (data.ph_value < 0 || data.ph_value > 14) {
+        throw new Error("Soil pH must be between 0 and 14.");
+    }
+}
+
+// ======================================
+// Show Error
+// ======================================
+
 function showError(message) {
+
     errorMessage.textContent = message;
     errorMessage.style.display = "block";
 }
 
-function hideError() {
+function clearError() {
+
     errorMessage.textContent = "";
     errorMessage.style.display = "none";
 }
 
-function setLoading(isLoading, text) {
-    predictButton.disabled = isLoading;
-    buttonText.textContent = isLoading
-        ? (text || "⏳ Analyzing...")
-        : "🤖 Predict Best Crop";
-}
+// ======================================
+// Display Crop Probabilities
+// ======================================
 
-function capitalize(str) {
-    str = String(str);
-    return str.charAt(0).toUpperCase() + str.slice(1);
-}
+function displayCropProbabilities(crops) {
 
-// Convert 0-1 or 0-100 values to a 0-100 number
-function toPercent(value) {
-    const num = Number(value);
-    if (Number.isNaN(num)) return 0;
-    return num <= 1 ? num * 100 : num;
-}
-
-// Turn many possible backend shapes into [{name, percent}, ...]
-function normalizeProbabilities(data) {
-    const raw =
-        data.probabilities ||
-        data.all_probabilities ||
-        data.crop_probabilities ||
-        data.top_predictions ||
-        data.top_crops ||
-        null;
-
-    if (!raw) return [];
-
-    let list = [];
-
-    if (Array.isArray(raw)) {
-        list = raw.map((item) => {
-            if (Array.isArray(item)) {
-                return { name: item[0], percent: toPercent(item[1]) };
-            }
-            return {
-                name: item.crop || item.name || item.label,
-                percent: toPercent(
-                    item.probability ?? item.confidence ?? item.score ?? 0
-                ),
-            };
-        });
-    } else if (typeof raw === "object") {
-        list = Object.entries(raw).map(([name, value]) => ({
-            name,
-            percent: toPercent(value),
-        }));
-    }
-
-    return list
-        .filter((c) => c.name)
-        .sort((a, b) => b.percent - a.percent);
-}
-
-function renderProbabilities(list) {
     cropList.innerHTML = "";
 
-    if (!list.length) {
-        probabilitySection.style.display = "none";
+    if (!Array.isArray(crops) || crops.length === 0) {
+        cropSection.style.display = "none";
         return;
     }
 
-    list.slice(0, 5).forEach((crop) => {
-        const item = document.createElement("div");
-        item.className = "crop-item";
+    crops.forEach(item => {
 
-        item.innerHTML = `
-            <div class="crop-info">
-                <span class="crop-name">${capitalize(crop.name)}</span>
-                <span class="crop-percent">${crop.percent.toFixed(1)}%</span>
-            </div>
-            <div class="progress-container">
-                <div class="progress-bar"></div>
-            </div>
-        `;
+        const percentage = Math.max(
+            0,
+            Math.min(100, Number(item.percentage))
+        );
 
-        cropList.appendChild(item);
+        if (!item.crop || !Number.isFinite(percentage)) {
+            return;
+        }
 
-        // animate bar after it is in the DOM
-        const bar = item.querySelector(".progress-bar");
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                bar.style.width = `${Math.min(crop.percent, 100)}%`;
-            });
-        });
+        const cropItem = document.createElement("div");
+        cropItem.className = "crop-item";
+
+        const info = document.createElement("div");
+        info.className = "crop-info";
+
+        const name = document.createElement("span");
+        name.className = "crop-name";
+        name.textContent = item.crop;
+
+        const percent = document.createElement("span");
+        percent.className = "crop-percent";
+        percent.textContent = percentage.toFixed(2) + "%";
+
+        const progressContainer = document.createElement("div");
+        progressContainer.className = "progress-container";
+
+        const progressBar = document.createElement("div");
+        progressBar.className = "progress-bar";
+
+        progressBar.style.width = percentage + "%";
+
+        info.append(name, percent);
+        progressContainer.appendChild(progressBar);
+
+        cropItem.append(info, progressContainer);
+
+        cropList.appendChild(cropItem);
     });
 
-    probabilitySection.style.display = "block";
+    cropSection.style.display = "block";
 }
 
-// ---------- FORM SUBMIT ----------
-form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    hideError();
+// ======================================
+// Display Prediction Result
+// ======================================
 
-    const N = parseFloat(document.getElementById("nitrogen").value);
-    const P = parseFloat(document.getElementById("phosphorus").value);
-    const K = parseFloat(document.getElementById("potassium").value);
-    const temperature = parseFloat(document.getElementById("temperature").value);
-    const humidity = parseFloat(document.getElementById("humidity").value);
-    const ph = parseFloat(document.getElementById("ph_value").value);
-    const rainfall = parseFloat(document.getElementById("rainfall").value);
+function displayResult(data) {
 
-    if ([N, P, K, temperature, humidity, ph, rainfall].some(Number.isNaN)) {
-        showError("Please fill in all fields with valid numbers.");
-        return;
+    if (!data.recommended_crop) {
+        throw new Error("Invalid prediction response from server.");
     }
 
-    // Both naming styles are sent so it works with common backend schemas
-    const payload = {
-        N, P, K,
-        nitrogen: N,
-        phosphorus: P,
-        potassium: K,
-        temperature,
-        humidity,
-        ph,
-        ph_value: ph,
-        rainfall,
-    };
+    result.textContent = data.recommended_crop;
 
-    setLoading(true);
-    resultEl.textContent = "Analyzing...";
-    resultDescription.textContent =
-        "Our AI model is analyzing your soil and weather data. " +
-        "The first request may take up to a minute while the server wakes up.";
-    confidenceBox.style.display = "none";
-    probabilitySection.style.display = "none";
+    description.textContent =
+        "This crop is the most suitable recommendation based on your soil and weather data.";
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    confidence.textContent =
+        Number(data.confidence).toFixed(2) + "%";
+
+    confidenceBox.style.display = "inline-block";
+
+    displayCropProbabilities(data.crop_probabilities);
+}
+
+// ======================================
+// Call FastAPI Backend
+// ======================================
+
+async function predictCrop(data) {
+
+    const response = await fetch(
+        `${API_URL}/predict`,
+        {
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json"
+            },
+
+            body: JSON.stringify(data)
+        }
+    );
+
+    const responseData = await response.json();
+
+    if (!response.ok) {
+
+        throw new Error(
+            responseData.detail || "Crop prediction failed."
+        );
+    }
+
+    return responseData;
+}
+
+// ======================================
+// Form Submit Event
+// ======================================
+
+form.addEventListener("submit", async function(event) {
+
+    event.preventDefault();
+
+    clearError();
 
     try {
-        const response = await fetch(`${API_BASE_URL}${PREDICT_ENDPOINT}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-            signal: controller.signal,
-        });
+
+        const inputData = getInputData();
+
+        validateData(inputData);
+
+        // Loading state
+        button.disabled = true;
+
+        buttonText.textContent =
+            "⏳ Analyzing Soil Data...";
+
+        result.textContent = "Analyzing...";
+
+        description.textContent =
+            "AI model is processing your information.";
+
+        // API request
+        const prediction = await predictCrop(inputData);
+
+        // Display result
+        displayResult(prediction);
+
+    }
+
+    catch (error) {
+
+        console.error("Prediction Error:", error);
+
+        showError(error.message);
+
+        result.textContent = "Prediction Failed";
+
+        description.textContent =
+            "Please check your inputs and backend connection.";
+
+    }
+
+    finally {
+
+        button.disabled = false;
+
+        buttonText.textContent =
+            "🤖 Predict Best Crop";
+    }
+});
+
+// ======================================
+// Backend Health Check
+// ======================================
+
+async function checkBackend() {
+
+    try {
+
+        const response = await fetch(
+            `${API_URL}/health`
+        );
 
         if (!response.ok) {
-            let detail = `Server error (${response.status})`;
-            try {
-                const err = await response.json();
-                if (typeof err.detail === "string") {
-                    detail = err.detail;
-                } else if (Array.isArray(err.detail)) {
-                    // FastAPI validation errors
-                    detail = err.detail
-                        .map((d) => `${(d.loc || []).slice(-1)[0]}: ${d.msg}`)
-                        .join(", ");
-                } else if (err.error || err.message) {
-                    detail = err.error || err.message;
-                }
-            } catch (_) { /* ignore JSON parse errors */ }
-            throw new Error(detail);
+            throw new Error("Backend unavailable");
         }
 
         const data = await response.json();
 
-        const crop =
-            data.recommended_crop ||
-            data.predicted_crop ||
-            data.prediction ||
-            data.crop ||
-            data.result;
+        console.log("AgriAI Backend:", data);
 
-        if (!crop) {
-            throw new Error("Unexpected response from server.");
-        }
-
-        resultEl.textContent = capitalize(crop);
-        resultDescription.textContent =
-            `Based on your soil nutrients and weather conditions, ` +
-            `${capitalize(crop)} is the most suitable crop to grow.`;
-
-        const probs = normalizeProbabilities(data);
-
-        let confidence = data.confidence ?? data.probability ?? data.score;
-        if (confidence === undefined && probs.length) {
-            confidence = probs[0].percent;
-        }
-
-        if (confidence !== undefined) {
-            confidenceEl.textContent = `${toPercent(confidence).toFixed(1)}%`;
-            confidenceBox.style.display = "inline-block";
-        }
-
-        renderProbabilities(probs);
-    } catch (error) {
-        console.error("Prediction error:", error);
-
-        resultEl.textContent = "Waiting for prediction...";
-        resultDescription.textContent =
-            "Enter your soil and weather details to discover the most suitable crop.";
-
-        if (error.name === "AbortError") {
-            showError("The server took too long to respond. Please try again.");
-        } else if (error instanceof TypeError) {
-            showError(
-                "Could not reach the server. Check your internet connection " +
-                "or try again in a moment."
-            );
-        } else {
-            showError(error.message || "Something went wrong. Please try again.");
-        }
-    } finally {
-        clearTimeout(timeoutId);
-        setLoading(false);
     }
-});
 
-// ---------- WAKE UP RENDER SERVER ON PAGE LOAD ----------
-// Render's free tier sleeps when idle; this pings it early.
-fetch(`${API_BASE_URL}/`, { method: "GET" }).catch(() => {});
+    catch (error) {
+
+        console.warn(
+            "Backend connection failed:",
+            error.message
+        );
+    }
+}
+
+// Initialize
+confidenceBox.style.display = "none";
+cropSection.style.display = "none";
+
+checkBackend();
