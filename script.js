@@ -5,7 +5,7 @@
 // AgriAI - Crop Recommendation System
 // ======================================
 
-const API_URL = "https://crop-recomendation-4.onrender.com";
+const API_URL = "https://crop-recomendation-5.onrender.com";
 
 // Get HTML elements
 const form = document.getElementById("predictionForm");
